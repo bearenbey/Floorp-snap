@@ -1,0 +1,134 @@
+name: floorp
+base: core22
+adopt-info: floorp
+summary: Floorp web browser (Firefox-based)
+description: |
+  Floorp is a Firefox-based browser. This snap repackages the upstream Linux tarball.
+grade: stable
+confinement: strict
+
+apps:
+  floorp:
+    command: bin/floorp-launch
+    extensions: [gnome]
+    plugs:
+      - home
+      - network
+      - network-bind
+      - desktop
+      - desktop-legacy
+      - gsettings
+      - wayland
+      - x11
+      - audio-playback
+      - opengl
+      - browser-support
+      - cups
+      - removable-media
+
+parts:
+  floorp:
+    plugin: nil
+    source: .
+    build-packages:
+      - execstack           # <-- add this
+      - binutils            # optional: for readelf to verify
+    stage-packages:
+      - libgtk-3-0
+      - libglib2.0-0
+      - libnss3
+      - libasound2
+      - libdbus-1-3
+      - libx11-6
+      - libxrandr2
+      - libxss1
+      - libxtst6
+      - libgdk-pixbuf-2.0-0
+      - libdrm2
+      - libxdamage1
+      - libxcomposite1
+      - libxfixes3
+      - libxshmfence1
+      - zlib1g
+      - ca-certificates
+
+    override-pull: |
+      set -e
+      rm -rf fetched && mkdir -p fetched
+      if [ -f ../build/SRC_TAR ] && [ -s ../build/SRC_TAR ]; then
+        TAR="$(cat ../build/SRC_TAR)"
+        [ -f "$TAR" ] || { echo "Missing tarball: $TAR"; exit 1; }
+        cp "$TAR" fetched/floorp.tar.xz
+        if [ -f ../build/VERSION ]; then
+          VERSION="$(cat ../build/VERSION)"
+        else
+          VERSION="$(basename "$TAR" | sed -nE 's/[^0-9]*([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p')"
+        fi
+        echo "Using tar from Makefile: $TAR (version $VERSION)"
+      else
+        echo "No pre-fetched tarball found; auto-fetching…"
+        ARCH="$CRAFT_TARGET_ARCH"
+        case "$ARCH" in
+          amd64) archpat='x86_64\|amd64'; archsf='amd64' ;;
+          arm64) archpat='arm64\|aarch64'; archsf='aarch64' ;;
+          *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+        esac
+        API="https://api.github.com/repos/Floorp-Projects/Floorp/releases/latest"
+        JSON="$(curl -fsSL "$API" || true)"
+        TAG="$(printf "%s" "$JSON" | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+        TAG="${TAG#v}"
+        URL_GH="$(printf "%s" "$JSON" | grep -o '"browser_download_url": *"[^"]*"' | cut -d'"' -f4 | grep -i linux | grep -E "$archpat" | grep -E '\.tar\.(bz2|xz|gz)$' | head -n1 || true)"
+        if [ -n "$URL_GH" ] && [ -n "$TAG" ]; then
+          echo "GitHub latest: $TAG"
+          curl -fsSL "$URL_GH" -o fetched/floorp.tar.xz
+          VERSION="$TAG"
+        else
+          echo "Falling back to SourceForge…"
+          SF_INDEX="https://sourceforge.net/projects/floorp-browser.mirror/files/"
+          HTML="$(curl -fsSL "$SF_INDEX")"
+          TAG="$(printf "%s" "$HTML" | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1 | sed 's/^v//')"
+          [ -n "$TAG" ] || { echo "Could not determine version"; exit 1; }
+          if [ "$ARCH" = "amd64" ]; then archsf="amd64"; fi
+          URL_SF="https://sourceforge.net/projects/floorp-browser.mirror/files/v${TAG}/floorp-linux-${archsf}.tar.xz/download"
+          curl -fsSL -L "$URL_SF" -o fetched/floorp.tar.xz
+          VERSION="$TAG"
+        fi
+      fi
+      craftctl set version="$VERSION"
+
+    override-build: |
+      set -e
+      mkdir -p "$CRAFT_PART_INSTALL/opt/floorp"
+      tar -xf fetched/floorp.tar.xz -C "$CRAFT_PART_INSTALL/opt/floorp" --strip-components=1
+
+      # --- Clear executable stack on any offending .so (esp. libonnxruntime.so)
+      if command -v execstack >/dev/null 2>&1; then
+        echo "Scanning for executable-stack libraries…"
+        while IFS= read -r -d '' f; do
+          if execstack -q "$f" 2>/dev/null | grep -q '^X'; then
+            echo "Clearing execstack: $f"
+            execstack -c "$f"
+          fi
+        done < <(find "$CRAFT_PART_INSTALL/opt/floorp" -type f -name '*.so*' -print0)
+      fi
+
+      # Optional: verify GNU_STACK is not executable anymore
+      if command -v readelf >/dev/null 2>&1; then
+        echo "Verifying GNU_STACK flags…"
+        readelf -lW "$CRAFT_PART_INSTALL/opt/floorp/libonnxruntime.so" 2>/dev/null | grep GNU_STACK || true
+      fi
+
+      # Launcher
+      install -Dm755 /bin/true "$CRAFT_PART_INSTALL/bin/floorp-launch"
+      cat > "$CRAFT_PART_INSTALL/bin/floorp-launch" << 'EOF'
+      #!/bin/sh
+      exec "$SNAP/opt/floorp/floorp" "$@"
+      EOF
+      chmod 755 "$CRAFT_PART_INSTALL/bin/floorp-launch"
+
+    stage:
+      - opt/floorp/**
+      - bin/floorp-launch
+    prime:
+      - opt/floorp/**
+      - bin/floorp-launch
