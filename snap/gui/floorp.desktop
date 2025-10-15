@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Floorp Browser
+Comment=Browse the Web
+Exec=floorp %U
+Icon=${SNAP}/meta/gui/floorp.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=Floorp
