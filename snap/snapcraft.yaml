@@ -88,23 +88,30 @@ apps:
     environment:
       TMPDIR: $XDG_RUNTIME_DIR
     plugs:
-      - alsa
-      - avahi-observe
-      - browser-support
-      - camera
-      - cups-control
-      - desktop
-      - gsettings
-      - home
-      - mount-observe
       - network
       - opengl
-      - password-manager-service
+      - x11
+      - wayland
+      - desktop
+      - gsettings
+      - audio-playback
       - pulseaudio
+      - alsa
+      - camera
+      - audio-record
+      - password-manager-service
+      - u2f-devices
+      - pcscd
       - removable-media
       - screen-inhibit-control
       - upower-observe
-      - x11
-      - wayland
-      - u2f-devices
-      - pcscd
+      - bluez
+      - cups-control
+      - avahi-observe
+      - joystick
+      - mount-observe
+
+slots:
+  floorp-mpris:
+    interface: mpris
+    name: floorp
