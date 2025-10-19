@@ -4,7 +4,8 @@ version: "latest"
 title: Floorp Browser
 summary: Browse the web with Floorp
 description: |
-  Floorp is a highly customizable browser derived from Firefox. This snap repackages the upstream Linux build.
+  Floorp is a highly customizable, privacy-first browser derived from Firefox.
+  This snap repackages the official Linux build for easy installs and automatic updates.
 grade: stable
 confinement: strict
 icon: snap/gui/floorp.png
@@ -34,6 +35,7 @@ parts:
       craftctl default
 
     override-build: |
+      # Run default dump step
       craftctl default
 
       install -Dm0644 /dev/stdin "$CRAFT_PART_INSTALL/usr/share/applications/floorp.desktop" <<'EOF'
@@ -58,6 +60,8 @@ parts:
       REL_PATH="${ACTUAL_BIN#"$CRAFT_PART_INSTALL/"}"
       install -Dm0755 /dev/stdin "$CRAFT_PART_INSTALL/bin/floorp-launch" <<EOF
       #!/bin/sh
+      # Make ffmpeg-2204 libraries visible (both arch paths are fine if missing)
+      export LD_LIBRARY_PATH="\$SNAP/ffmpeg-2204/usr/lib:\$SNAP/ffmpeg-2204/usr/lib/x86_64-linux-gnu:\$SNAP/ffmpeg-2204/usr/lib/aarch64-linux-gnu:\$LD_LIBRARY_PATH"
       exec "\$SNAP/$REL_PATH" "\$@"
       EOF
 
@@ -70,10 +74,14 @@ parts:
         done < <(find "$CRAFT_PART_INSTALL" -type f -name '*.so*' -print0)
       fi
 
+    # Runtime libs + dictionaries & fonts for better UX
     stage-packages:
       - libasound2
       - libnspr4
       - libnss3
+      - hunspell-en-us
+      - fonts-noto-color-emoji
+      - fonts-noto-core
 
     stage:
       - "**"
@@ -87,31 +95,54 @@ apps:
     extensions: [gnome]
     environment:
       TMPDIR: $XDG_RUNTIME_DIR
+      LD_LIBRARY_PATH: >-
+        $SNAP/ffmpeg-2204/usr/lib:
+        $SNAP/ffmpeg-2204/usr/lib/x86_64-linux-gnu:
+        $SNAP/ffmpeg-2204/usr/lib/aarch64-linux-gnu:
+        $LD_LIBRARY_PATH
+      DICPATH: "$SNAP/usr/share/hunspell:$SNAP_COMMON/snap-hunspell"
     plugs:
+      # Core
       - network
       - opengl
       - x11
       - wayland
       - desktop
       - gsettings
+
+      # Audio + media
       - audio-playback
       - pulseaudio
       - alsa
       - camera
       - audio-record
+
+      # Security / devices
       - password-manager-service
       - u2f-devices
       - pcscd
+
+      # QoL
       - removable-media
       - screen-inhibit-control
       - upower-observe
+
+      # Optional
       - bluez
       - cups-control
       - avahi-observe
       - joystick
       - mount-observe
 
+# MPRIS for media keys / desktop media controls
 slots:
   floorp-mpris:
     interface: mpris
     name: floorp
+
+# External runtime codecs (H.264/AAC via ffmpeg-2204 content snap)
+plugs:
+  ffmpeg-2204:
+    interface: content
+    default-provider: ffmpeg-2204
+    target: $SNAP/ffmpeg-2204
