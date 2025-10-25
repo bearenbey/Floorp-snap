@@ -9,62 +9,94 @@ description: |
 grade: stable
 confinement: strict
 icon: snap/gui/floorp.png
-
 contact: https://github.com/Floorp-Projects/Floorp/issues
 website: https://floorp.app/
 source-code: https://github.com/Floorp-Projects/Floorp
 issues: https://github.com/Floorp-Projects/Floorp/issues
 license: MPL-2.0
 donation: https://floorp.app/donate
-
 architectures:
   - build-on: amd64
   - build-on: arm64
-
 parts:
   floorp:
     plugin: dump
-    source: https://github.com/Floorp-Projects/Floorp/releases/latest/download/floorp-linux-amd64.tar.xz
+    source: https://example.com/placeholder.tar.xz
     source-type: tar
-
     build-packages:
       - execstack
       - binutils
-
+      - curl
+      - rsync
+      - jq
     override-pull: |
-      craftctl default
-
+      set -x
+      echo "--- Executing custom override-pull to find the latest release ---"
+      ARCH=$(uname -m)
+      if [ "$ARCH" = "x86_64" ]; then
+        FILE_ARCH="x86_64"
+      elif [ "$ARCH" = "aarch64" ]; then
+        FILE_ARCH="arm64"
+      else
+        echo "ERROR: Unsupported architecture: $ARCH"
+        exit 1
+      fi
+      echo "Looking for Floorp release for architecture: $FILE_ARCH"
+      API_URL="https://api.github.com/repos/Floorp-Projects/Floorp/releases/latest"
+      RELEASE_JSON=$(curl -sL "$API_URL")
+      echo "GitHub API response: $RELEASE_JSON"
+      RELEASE_URL=$(echo "$RELEASE_JSON" | jq -r ".assets[] | select(.name | test(\"floorp-linux-$FILE_ARCH.tar.xz\")) | .browser_download_url")
+      if [ -z "$RELEASE_URL" ]; then
+        echo "ERROR: Failed to find the latest release URL for floorp-linux-$FILE_ARCH.tar.xz"
+        exit 1
+      fi
+      echo "Found latest download URL: $RELEASE_URL"
+      curl -L -o floorp.tar.xz "$RELEASE_URL"
+      echo "--- Download complete ---"
     override-build: |
-      # Run default dump step
+      echo "--- Executing corrected override-build ---"
+      if [ ! -f floorp.tar.xz ]; then
+          echo "ERROR: floorp.tar.xz not found. override-pull failed."
+          exit 1
+      fi
+      mkdir -p extracted_source
+      tar -xf floorp.tar.xz -C extracted_source --strip-components=1
+      rsync -a extracted_source/ .
+      rm -rf extracted_source
       craftctl default
-
-      install -Dm0644 /dev/stdin "$CRAFT_PART_INSTALL/usr/share/applications/floorp.desktop" <<'EOF'
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/applications"
+      cat << DESKTOP_EOF > "$CRAFT_PART_INSTALL/usr/share/applications/floorp.desktop"
       [Desktop Entry]
       Name=Floorp
       Comment=Browse the Web
       Exec=floorp %U
-      Icon=${SNAP}/meta/gui/floorp.png
+      Icon=\${SNAP}/meta/gui/floorp.png
       Terminal=false
       Type=Application
       Categories=Network;WebBrowser;
       MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
       StartupWMClass=Floorp
-      EOF
-
+      DESKTOP_EOF
+      echo "Searching for Floorp binary in $CRAFT_PART_INSTALL..."
+      find "$CRAFT_PART_INSTALL" -type f \( -name floorp -o -name floorp-bin \) -perm -111
       ACTUAL_BIN="$(find "$CRAFT_PART_INSTALL" -type f \( -name floorp -o -name floorp-bin \) -perm -111 | head -n1 || true)"
       if [ -z "$ACTUAL_BIN" ]; then
         echo "ERROR: Could not find Floorp binary in $CRAFT_PART_INSTALL" >&2
         find "$CRAFT_PART_INSTALL" -maxdepth 3 -printf '%P\n' >&2
         exit 1
       fi
+      echo "Found Floorp binary at: $ACTUAL_BIN"
       REL_PATH="${ACTUAL_BIN#"$CRAFT_PART_INSTALL/"}"
-      install -Dm0755 /dev/stdin "$CRAFT_PART_INSTALL/bin/floorp-launch" <<EOF
+      echo "Relative path to binary: $REL_PATH"
+      mkdir -p "$CRAFT_PART_INSTALL/bin"
+      cat << LAUNCH_EOF > "$CRAFT_PART_INSTALL/bin/floorp-launch"
       #!/bin/sh
-      # Make ffmpeg-2204 libraries visible (both arch paths are fine if missing)
+      set -x
+      echo "Launching Floorp with SNAP=\$SNAP and REL_PATH=$REL_PATH"
       export LD_LIBRARY_PATH="\$SNAP/ffmpeg-2204/usr/lib:\$SNAP/ffmpeg-2204/usr/lib/x86_64-linux-gnu:\$SNAP/ffmpeg-2204/usr/lib/aarch64-linux-gnu:\$LD_LIBRARY_PATH"
       exec "\$SNAP/$REL_PATH" "\$@"
-      EOF
-
+      LAUNCH_EOF
+      chmod 0755 "$CRAFT_PART_INSTALL/bin/floorp-launch"
       if command -v execstack >/dev/null 2>&1; then
         while IFS= read -r -d '' so; do
           if execstack -q "$so" 2>/dev/null | grep -q '^X'; then
@@ -73,8 +105,7 @@ parts:
           fi
         done < <(find "$CRAFT_PART_INSTALL" -type f -name '*.so*' -print0)
       fi
-
-    # Runtime libs + dictionaries & fonts for better UX
+      echo "--- override-build finished successfully ---"
     stage-packages:
       - libasound2
       - libnspr4
@@ -82,12 +113,10 @@ parts:
       - hunspell-en-us
       - fonts-noto-color-emoji
       - fonts-noto-core
-
     stage:
       - "**"
       - bin/floorp-launch
       - usr/share/applications/floorp.desktop
-
 apps:
   floorp:
     command: bin/floorp-launch
@@ -102,45 +131,32 @@ apps:
         $LD_LIBRARY_PATH
       DICPATH: "$SNAP/usr/share/hunspell:$SNAP_COMMON/snap-hunspell"
     plugs:
-      # Core
       - network
       - opengl
       - x11
       - wayland
       - desktop
       - gsettings
-
-      # Audio + media
       - audio-playback
       - pulseaudio
       - alsa
       - camera
       - audio-record
-
-      # Security / devices
       - password-manager-service
       - u2f-devices
       - pcscd
-
-      # QoL
       - removable-media
       - screen-inhibit-control
       - upower-observe
-
-      # Optional
       - bluez
       - cups-control
       - avahi-observe
       - joystick
       - mount-observe
-
-# MPRIS for media keys / desktop media controls
 slots:
   floorp-mpris:
     interface: mpris
     name: floorp
-
-# External runtime codecs (H.264/AAC via ffmpeg-2204 content snap)
 plugs:
   ffmpeg-2204:
     interface: content
